@@ -4,8 +4,12 @@ all: $(PROGS)
 
 CC = g++
 
-LFLAGS = -ljack -lespeak -lpthread -lQtGui -lQtCore -lglib-2.0 -lxmmsclient++-glib
-CFLAGS = -Wall -c -I/usr/include/QtCore -I/usr/include/QtGui -I/usr/local/include/xmms2 -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include
+LFLAGS = -ljack -lespeak -lpthread -lglib-2.0 -lxmmsclient++-glib -lxmmsclient++ -lxmmsclient -lxmmsclient-glib
+LFLAGS +=  $(shell pkg-config --libs gtkmm-3.0) $(shell pkg-config --libs libnotify)
+
+CFLAGS = -Wall -c -I /usr/local/include/xmms2 -I /usr/include/glib-2.0 -I /usr/lib/x86_64-linux-gnu/glib-2.0/include 
+CFLAGS +=  -I/usr/include/libnotify $(shell pkg-config --cflags gtkmm-3.0) $(shell pkg-config --cflags libnotify)
+
 LIBS = 
 
 SRCS = digitalDJ.cpp
