@@ -24,7 +24,10 @@ HDRS =
 	$(CC) ${CFLAGS} $<	
 
 digitalDJ: ${OBJS}
-	${CC} -o $@ ${OBJS} ${LFLAGS} 
+	${CC} -o $@ ${OBJS} ${LFLAGS}
+
+#notification: ${OBJS}
+#	${CC} -o $@ ${OBJS} ${LFLAGS}
 
 clean:
 	rm -f ${OBJS} $(PROGS:%=%.o)
