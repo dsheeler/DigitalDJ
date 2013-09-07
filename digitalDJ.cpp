@@ -17,6 +17,7 @@
 #include <gdk/gdk.h>
 #include <gdkmm-2.4/gdkmm/pixbufloader.h>
 #include <gdkmm-2.4/gdkmm/pixbuf.h>
+#include <festival.h>
 
 #include <cstdlib>
 #include <string>
@@ -34,7 +35,6 @@ jack_client_t *client;
 jack_ringbuffer_t *jringbuf;
 
 const char *err_buf;
-const char *val;
 int intval;
 
 void log (const char *pattern, ...) 
@@ -64,19 +64,40 @@ Glib::RefPtr< Gdk::Pixbuf > scale_pixbuf( Glib::RefPtr< Gdk::Pixbuf > const& pix
   return pixbuf->scale_simple( dest_width, dest_height, Gdk::INTERP_BILINEAR );
 }
 
-
-
-
-static void signal_handler(int sig) 
-{
-
+static void signal_handler(int sig) {
 	jack_client_close(client);
 	fprintf(stderr, "signal received, exiting ...\n");
 	exit(0);
 }
 
-int synth_callback(short *wav, int numsamples, espeak_EVENT *events) 
-{
+void festival_Synth(const char *text_to_say) {
+  EST_Wave wave;
+  festival_text_to_wave(text_to_say, wave);
+  double scale = 1/32768.0;
+  wave.resample(48000);
+
+  int numsamples = wave.num_samples();
+  sample_t jbuf[numsamples];
+
+  for (int i = 0; i < numsamples; i++) {
+    jbuf[i] =  wave(i) * scale;
+  }
+
+  size_t num_bytes_to_write;
+
+  num_bytes_to_write = numsamples*sizeof(sample_t);
+
+  do {
+    int nwritten = jack_ringbuffer_write(jringbuf, (char*)jbuf, num_bytes_to_write);
+    if (nwritten < num_bytes_to_write && num_bytes_to_write > 0) {
+      usleep(100000);
+    }
+    num_bytes_to_write -= nwritten;
+
+  } while (num_bytes_to_write > 0);
+}
+
+int synth_callback(short *wav, int numsamples, espeak_EVENT *events) {
 
 	size_t num_bytes_to_write;
 	sample_t buf[2*numsamples];
@@ -220,12 +241,12 @@ bool DDJXmms2Client::my_current_id(const int& id) {
 
     try {
       std::cout << info["artist"] << std::endl;
-      val = boost::get< std::string >(info["artist"]) + std::string(": ");
+      val = boost::get< std::string >(info["artist"]) + std::string(". ");
    
     } catch( Xmms::no_such_key_error& err ) {
 
       std::cout << "No artist" << std::endl;
-      val = std::string("Unknown Artist: ");
+      val = std::string("Unknown Artist. ");
     }
 
     say = val;
@@ -239,10 +260,10 @@ bool DDJXmms2Client::my_current_id(const int& id) {
     }
     catch( Xmms::no_such_key_error& err ) {
       std::cout << "Title" << std::endl;
-      val = std::string("Unknown Title");
+      val = std::string("Unknown Title.");
     }
 
-    say += val;
+    say += val + std::string(".");
     msg += std::string("'") + val + std::string("'");
 
     try {
@@ -284,15 +305,15 @@ bool DDJXmms2Client::my_current_id(const int& id) {
 
   jack_ringbuffer_reset(jringbuf);
 
-  espeak_Synth(say.c_str(),
+  festival_Synth(say.c_str());
+  /*espeak_Synth(say.c_str(),
    8000,
    0,
    POS_CHARACTER,
    0,
    espeakCHARS_AUTO,
    &espeak_id,
-   NULL);
-
+   NULL);*/
 
   return true;
 
@@ -362,6 +383,18 @@ void setup_jack() {
   }
 }
 
+void setup_festival() {
+
+  int heap_size = 2000000;  // default scheme heap size
+  int load_init_files = 1; // we want the festival init files loaded
+
+  festival_initialize(load_init_files,heap_size);
+
+  festival_eval_command("(voice_cmu_us_slt_arctic_clunits)");
+  festival_Synth("Hi.  I am your synthetic xmms2, jack DJ.  I hope you like my voice!");
+  
+}
+
 void setup_espeak() {
   int buflength = 20;
   espeak_Initialize(AUDIO_OUTPUT_RETRIEVAL,
@@ -398,6 +431,7 @@ int main (int argc, char *argv[]) {
   notification = notify_notification_new("", NULL, ICON_PATH);
   setup_jack();
   setup_espeak();
+  setup_festival();
   setup_signal_handler();
 
   try {
