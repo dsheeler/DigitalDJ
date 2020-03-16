@@ -15,6 +15,7 @@
 #include <gtkmm.h>
 #include <gdkmm-2.4/gdkmm/pixbufloader.h>
 #include <gdkmm-2.4/gdkmm/pixbuf.h>
+#include <glibmm-2.4/glibmm.h>
 #include <festival/festival.h>
 
 #include <cstdlib>
