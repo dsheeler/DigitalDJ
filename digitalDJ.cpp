@@ -20,11 +20,20 @@
 #include <cstdlib>
 #include <string>
 #include <iostream>
+#include <memory>
+#include <thread>
+#include <chrono>
 
 #define SAY_BUF_SIZE 8000
 #define ICON_PATH "/usr/local/share/icons/hicolor/64x64/apps/xmms2.png"
 
 typedef jack_default_audio_sample_t sample_t;
+
+const int RB_size = 3276800;
+
+static volatile sig_atomic_t signal_flag;
+
+void set_signal_flag(int signal) { signal_flag = signal; }
 
 Glib::RefPtr< Gdk::Pixbuf > scale_pixbuf( Glib::RefPtr< Gdk::Pixbuf > const& pixbuf ) {
     
@@ -43,10 +52,7 @@ Glib::RefPtr< Gdk::Pixbuf > scale_pixbuf( Glib::RefPtr< Gdk::Pixbuf > const& pix
     return pixbuf->scale_simple( dest_width, dest_height, Gdk::INTERP_BILINEAR );
 }
 
-static void signal_handler(int sig) {
-    fprintf(stderr, "signal %d received, exiting ...\n", sig);
-    exit(0);
-}
+
 
 class DigitalDJ {
     public:
@@ -57,25 +63,34 @@ class DigitalDJ {
         bool error_handler(const std::string& error);
         bool handle_bindata(const Xmms::bin& data);
         jack_port_t *jack_output_port(int i);
-        jack_ringbuffer_t *jack_ringbuffer() { return jack_ringbuf_; }
-        
+        auto main_loop() { return ml_; }
+        shared_ptr<jack_ringbuffer_t> jack_ringbuffer() { return jack_ringbuf_; }
+        void main_loop_run() { g_main_loop_run(ml_); }
+        void main_loop_quit() { g_main_loop_quit(ml_); }
     private:
         Xmms::Client xmms2_client_;
         Xmms::Client xmms2_sync_client_;
         NotifyNotification *notification_;
         jack_port_t  *jack_output_ports_[2];
         jack_client_t *jack_client_;
-        jack_ringbuffer_t *jack_ringbuf_;
+        shared_ptr<jack_ringbuffer_t> jack_ringbuf_;
         jack_nframes_t sample_rate_ = 48000;
+        GMainLoop *ml_;
         
         void setup_jack();
+        void teardown_jack();
         void setup_festival();
         void setup_signal_handler();
         void festival_synth(const char *text);
         static int process(jack_nframes_t nframes, void *arg);
 };
 
-
+struct RB_deleter { 
+    void operator()(jack_ringbuffer_t* r) const {
+        std::cout << "free jack ringbuffer...\n";
+        jack_ringbuffer_free(r);
+    }
+};
 
 DigitalDJ::DigitalDJ()
     : xmms2_client_(std::string("DigitalDJ")),
@@ -84,7 +99,7 @@ DigitalDJ::DigitalDJ()
     xmms2_client_.connect(std::getenv("XMMS_PATH"));
     xmms2_sync_client_.connect(std::getenv("XMMS_PATH"));
     notify_init("xmms2-jack-dj");
-    notification_ = notify_notification_new("", NULL, ICON_PATH);
+    notification_ = notify_notification_new("", nullptr, ICON_PATH);
     setup_jack();
     setup_festival();
     setup_signal_handler();
@@ -94,20 +109,11 @@ DigitalDJ::DigitalDJ()
                 );
     
     xmms2_client_.setMainloop( new Xmms::GMainloop( xmms2_client_.getConnection() ) );
-    
-    /*
-  * Initialize and run glib mainloop, check out glib documentation
-  * for this.
-  */
-    GMainLoop* ml = g_main_loop_new( 0, 0 );
-    g_main_loop_run( ml );
-    
+    ml_ = g_main_loop_new( 0, 0 );
 }
 
 DigitalDJ::~DigitalDJ() { 
-    jack_ringbuffer_free(jack_ringbuf_);
-    jack_client_close (jack_client_);
-
+    teardown_jack();
 }
 
 /**
@@ -127,7 +133,7 @@ int DigitalDJ::process (jack_nframes_t nframes, void *arg)
     }
 
     num_bytes_to_read = sizeof(sample_t) * nframes;
-    num_bytes = jack_ringbuffer_read(dj->jack_ringbuffer(), (char*)out[0], num_bytes_to_read);
+    num_bytes = jack_ringbuffer_read(dj->jack_ringbuffer().get(), (char*)out[0], num_bytes_to_read);
     num_samples = num_bytes / sizeof(sample_t);
     for (size_t i = 0; i < num_samples; i++) {
         out[1][i] = out[0][i];
@@ -179,7 +185,7 @@ void DigitalDJ::festival_synth(const char *text_to_say) {
     num_bytes_to_write = numsamples*sizeof(sample_t);
     
     do {
-        size_t nwritten = jack_ringbuffer_write(jack_ringbuf_, (char*)jbuf, num_bytes_to_write);
+        size_t nwritten = jack_ringbuffer_write(jack_ringbuf_.get(), (char*)jbuf, num_bytes_to_write);
         if (nwritten < num_bytes_to_write && num_bytes_to_write > 0) {
             usleep(100000);
         }
@@ -293,7 +299,7 @@ bool DigitalDJ::my_current_id(const int& id) {
   
 */
     notify_notification_update (notification_, msg.c_str(), NULL, NULL);
-    jack_ringbuffer_reset(jack_ringbuf_);
+    jack_ringbuffer_reset(jack_ringbuf_.get());
     
     festival_synth(say.c_str());
     return true;
@@ -317,13 +323,13 @@ void DigitalDJ::setup_jack() {
     jack_options_t jack_options = JackNullOption;
     jack_status_t status;
 
-    jack_ringbuf_ = jack_ringbuffer_create(3276800);
+    jack_ringbuf_ = shared_ptr<jack_ringbuffer_t>(jack_ringbuffer_create(RB_size), RB_deleter());
 
     string name = "DigitalDJ";
 
     strcpy(client_name, name.c_str());
-    jack_client_ = jack_client_open (client_name, jack_options, &status);
-    if (jack_client_ == NULL) {
+    jack_client_ = jack_client_open(client_name, jack_options, &status);
+    if (jack_client_ == nullptr) {
         fprintf (stderr, "jack_client_open() failed, "
                          "status = 0x%2.0x\n", status);
         if (status & JackServerFailed) {
@@ -357,23 +363,44 @@ void DigitalDJ::setup_jack() {
     }
 }
 
+void DigitalDJ::teardown_jack() {
+    for (int i = 0; i < 2; ++i) {
+        jack_port_unregister(jack_client_, jack_output_ports_[i]);
+    }
+    if (jack_client_) {
+        jack_client_close(jack_client_);
+    }
+    
+}
+
 void DigitalDJ::setup_festival() {
     
     int heap_size = 2000000;  // default scheme heap size
     int load_init_files = 1; // we want the festival init files loaded
     
     festival_initialize(load_init_files,heap_size);
-    
-    festival_eval_command("(voice_cmu_us_slt_arctic_clunits)");
+    festival_eval_command("(voice_cmu_us_bdl_arctic_clunits)");
     festival_synth("Hi.  I am your synthetic xmms2, jack DJ.  I hope you like my voice!");
     
 }
 
 void DigitalDJ::setup_signal_handler() {
-    signal(SIGQUIT, signal_handler);
-    signal(SIGTERM, signal_handler);
-    signal(SIGHUP, signal_handler);
-    signal(SIGINT, signal_handler);
+    signal(SIGQUIT, set_signal_flag);
+    signal(SIGTERM, set_signal_flag);
+    signal(SIGHUP, set_signal_flag);
+    signal(SIGINT, set_signal_flag);
+}
+
+void process_signal(DigitalDJ &dj) {
+    while (1) {
+        if (signal_flag == SIGQUIT || signal_flag == SIGTERM ||
+                signal_flag == SIGHUP || signal_flag == SIGINT) {
+            cout << "got signal; terminating" << endl;
+            break;
+        }
+        this_thread::sleep_for(chrono::milliseconds(100));
+    }
+    g_main_loop_quit(dj.main_loop());
 }
 
 int main (int argc, char *argv[]) {
@@ -381,6 +408,9 @@ int main (int argc, char *argv[]) {
     
     try {
         DigitalDJ myclient;
+        thread signal_handler(process_signal, ref(myclient));
+        g_main_loop_run(myclient.main_loop());
+        signal_handler.join();
     }
     catch( Xmms::connection_error& err ) {
         std::cout << "Connection failed: " << err.what() << std::endl;
