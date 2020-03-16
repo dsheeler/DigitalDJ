@@ -1,0 +1,9 @@
+*.o
+*.cflags
+*.config
+*.creator
+*.cxxflags
+*.files
+*.includes
+digitalDJ
+*.o
