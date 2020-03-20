@@ -24,126 +24,45 @@
 typedef jack_default_audio_sample_t sample_t;
 
 const int RB_size = 3276800;
-const double quiet_factor = 0.5;
+const double quiet_factor = 0.4;
 
 static volatile sig_atomic_t signal_flag;
 
 void set_signal_flag(int signal) { signal_flag = signal; }
 
-Glib::RefPtr< Gdk::Pixbuf > scale_pixbuf( Glib::RefPtr< Gdk::Pixbuf > const& pixbuf ) {
-    
-    const int width = pixbuf->get_width();
-    const int height = pixbuf->get_height();
-    int dest_width = 128;
-    int dest_height = 128;
-    double ratio = width / static_cast< double >(height);
-    
-    if( width > height ) {
-        dest_height = static_cast< int >(dest_height / ratio);
-    }
-    else if( height > width ) {
-        dest_width = static_cast< int >(dest_width * ratio);
-    }
-    return pixbuf->scale_simple( dest_width, dest_height, Gdk::INTERP_BILINEAR );
-}
-
-class DigitalDJ {
+class SpeechEngine {
     public:
-        DigitalDJ();
-        ~DigitalDJ();
-        
-        bool my_current_id(const int& id);
-        bool error_handler(const std::string& error);
-        bool handle_bindata(const Xmms::bin& data);
-        jack_port_t *jack_output_port(int i);
-        jack_port_t *jack_input_port(int i);
-        auto main_loop() { return ml_; }
-        shared_ptr<jack_ringbuffer_t> jack_ringbuffer() { return jack_ringbuf_; }
-        void main_loop_run() { g_main_loop_run(ml_); }
-        void main_loop_quit() { g_main_loop_quit(ml_); }
-    private:
-        Xmms::Client xmms2_client_;
-        Xmms::Client xmms2_sync_client_;
-        NotifyNotification *notification_;
-        jack_port_t  *jack_output_ports_[2], *jack_input_ports_[2];
-        jack_client_t *jack_client_;
-        shared_ptr<jack_ringbuffer_t> jack_ringbuf_;
-        jack_nframes_t sample_rate_ = 48000;
-        GMainLoop *ml_;
-        void setup_jack();
-        void teardown_jack();
-        void setup_festival();
-        void setup_signal_handler();
-        void festival_synth(const char *text);
-        static int process(jack_nframes_t nframes, void *arg);
+        virtual void speek(const string& to_say,
+                           shared_ptr<jack_ringbuffer_t> rb,
+                           jack_nframes_t sr) = 0;
 };
 
-struct RB_deleter { 
-    void operator()(jack_ringbuffer_t* r) const {
-        std::cout << "free jack ringbuffer...\n";
-        jack_ringbuffer_free(r);
-    }
+class FestivalSpeechEngine : public SpeechEngine {
+    public:
+        FestivalSpeechEngine();
+        void speek(const string& to_say,
+                   shared_ptr<jack_ringbuffer_t> rb,
+                   jack_nframes_t sr) override;
 };
 
-DigitalDJ::DigitalDJ()
-    : xmms2_client_(std::string("DigitalDJ")),
-      xmms2_sync_client_(std::string("SyncDigitalDJ")) {
-    xmms2_client_.connect(std::getenv("XMMS_PATH"));
-    xmms2_sync_client_.connect(std::getenv("XMMS_PATH"));
-    notify_init("xmms2-jack-dj");
-    notification_ = notify_notification_new("", nullptr, ICON_PATH);
-    setup_jack();
-    setup_festival();
-    setup_signal_handler();
-    xmms2_client_.playback.broadcastCurrentID()(
-                Xmms::bind( &DigitalDJ::my_current_id, this ),
-                Xmms::bind( &DigitalDJ::error_handler, this )
-                );
-
-    xmms2_client_.setMainloop( new Xmms::GMainloop( xmms2_client_.getConnection() ) );
-    ml_ = g_main_loop_new( 0, 0 );
+FestivalSpeechEngine::FestivalSpeechEngine() {
+    int heap_size = 20000000;  // default scheme heap size
+    int load_init_files = 1; // we want the festival init files loaded
+    vector<string> voices = {"cmu_us_awb_cg",
+                             "cmu_us_rms_cg", "cmu_us_slt_cg",
+                             "cmu_us_awb_arctic_clunits",
+                             "cmu_us_bdl_arctic_clunits", "cmu_us_clb_arctic_clunits",
+                             "cmu_us_jmk_arctic_clunits", "cmu_us_rms_arctic_clunits",
+                             "cmu_us_slt_arctic_clunits", "kal_diphone", "rab_diphone" };
+    festival_initialize(load_init_files,heap_size);
+    festival_eval_command("(voice_cmu_us_jmk_arctic_clunits)");
 }
 
-DigitalDJ::~DigitalDJ() { 
-    teardown_jack();
-}
-
-/**
- * The process callback for this JACK application is called in a
- * special realtime thread once for each audio cycle.
- *
- */
-
-int DigitalDJ::process (jack_nframes_t nframes, void *arg)
-{
-    sample_t *out[2], *in[2];
-    size_t num_bytes_to_read, num_bytes, num_samples;
-    DigitalDJ *dj = (DigitalDJ *)arg;
-
-    for (size_t i = 0; i < 2; i++) {
-        out[i] = (sample_t *) jack_port_get_buffer (dj->jack_output_port(i), nframes);
-        in[i] = (sample_t *) jack_port_get_buffer (dj->jack_input_port(i), nframes);
-    }
-
-    num_bytes_to_read = sizeof(sample_t) * nframes;
-    num_bytes = jack_ringbuffer_read(dj->jack_ringbuffer().get(), (char*)out[0], num_bytes_to_read);
-    num_samples = num_bytes / sizeof(sample_t);
-    for (size_t i = 0; i < num_samples; i++) {
-        out[1][i] = out[0][i];
-        out[0][i] += in[0][i] * quiet_factor;
-        out[1][i] += in[1][i] * quiet_factor;
-        
-    }
-    for (size_t i = num_samples; i < nframes; i++) {
-        out[0][i] = in[0][i];
-        out[1][i] = in[1][i];
-    }
-    return 0;
-}
-
-void DigitalDJ::festival_synth(const char *text_to_say) {
+void FestivalSpeechEngine::speek(const string& to_say,
+                                 shared_ptr<jack_ringbuffer_t> rb,
+                                 jack_nframes_t sr) {
     /*Strip out annoying [Explicit] from title.*/
-    std::string edited_text(text_to_say);
+    std::string edited_text(to_say);
     std::size_t found = edited_text.find("[Explicit]");
     if (found != edited_text.npos) {
         edited_text.erase(found, 10);
@@ -168,7 +87,7 @@ void DigitalDJ::festival_synth(const char *text_to_say) {
     EST_Wave wave;
     festival_text_to_wave(edited_text.c_str(), wave);
     double scale = 1/32768.0;
-    wave.resample(sample_rate_);
+    wave.resample(sr);
     
     int numsamples = wave.num_samples();
     sample_t jbuf[numsamples];
@@ -176,13 +95,13 @@ void DigitalDJ::festival_synth(const char *text_to_say) {
     for (int i = 0; i < numsamples; i++) {
         jbuf[i] =  wave(i) * scale;
     }
-    
+        
     size_t num_bytes_to_write;
-    
+        
     num_bytes_to_write = numsamples*sizeof(sample_t);
-    
+        
     do {
-        size_t nwritten = jack_ringbuffer_write(jack_ringbuf_.get(), (char*)jbuf, num_bytes_to_write);
+        size_t nwritten = jack_ringbuffer_write(rb.get(), (char*)jbuf, num_bytes_to_write);
         if (nwritten < num_bytes_to_write && num_bytes_to_write > 0) {
             usleep(100000);
         }
@@ -191,17 +110,132 @@ void DigitalDJ::festival_synth(const char *text_to_say) {
     } while (num_bytes_to_write > 0);
 }
 
+
+
+class DigitalDJ {
+    public:
+        DigitalDJ();
+        ~DigitalDJ();
+        
+        auto scale_pixbuf( Glib::RefPtr< Gdk::Pixbuf > const& pixbuf );
+        bool my_current_id(const int& id);
+        bool error_handler(const std::string& error);
+        bool handle_bindata(const Xmms::bin& data);
+        jack_port_t *jack_output_port(int i);
+        jack_port_t *jack_input_port(int i);
+        auto main_loop() { return ml_; }
+        shared_ptr<jack_ringbuffer_t> jack_ringbuffer() { return rb_; }
+        void main_loop_run() { g_main_loop_run(ml_); }
+        void main_loop_quit() { g_main_loop_quit(ml_); }
+    private:
+        unique_ptr<SpeechEngine> se_;
+        Xmms::Client xmms2_client_;
+        Xmms::Client xmms2_sync_client_;
+        NotifyNotification *notification_;
+        jack_port_t  *jack_output_ports_[2], *jack_input_ports_[2];
+        jack_client_t *jack_client_;
+        shared_ptr<jack_ringbuffer_t> rb_;
+        jack_nframes_t sr_ = 48000;
+        GMainLoop *ml_;
+        void setup_jack();
+        void teardown_jack();
+        void setup_signal_handler();
+        static int process(jack_nframes_t nframes, void *arg);
+};
+
+struct RB_deleter { 
+    void operator()(jack_ringbuffer_t* r) const {
+        std::cout << "free jack ringbuffer...\n";
+        jack_ringbuffer_free(r);
+    }
+};
+
+DigitalDJ::DigitalDJ() :
+    xmms2_client_(std::string("DigitalDJ")),
+    xmms2_sync_client_(std::string("SyncDigitalDJ")) {
+    
+    xmms2_client_.connect(std::getenv("XMMS_PATH"));
+    xmms2_sync_client_.connect(std::getenv("XMMS_PATH"));
+    notify_init("xmms2-jack-dj");
+    notification_ = notify_notification_new("", nullptr, ICON_PATH);
+    setup_jack();
+    se_ = make_unique<FestivalSpeechEngine>();
+    setup_signal_handler();
+    xmms2_client_.playback.broadcastCurrentID()(
+                Xmms::bind( &DigitalDJ::my_current_id, this ),
+                Xmms::bind( &DigitalDJ::error_handler, this )
+                );
+
+    xmms2_client_.setMainloop( new Xmms::GMainloop( xmms2_client_.getConnection() ) );
+    ml_ = g_main_loop_new( 0, 0 );
+}
+
+DigitalDJ::~DigitalDJ() { 
+    teardown_jack();
+}
+
+auto DigitalDJ::scale_pixbuf( Glib::RefPtr< Gdk::Pixbuf > const& pixbuf ) {
+    
+    const int width = pixbuf->get_width();
+    const int height = pixbuf->get_height();
+    int dest_width = 128;
+    int dest_height = 128;
+    double ratio = width / static_cast< double >(height);
+    
+    if( width > height ) {
+        dest_height = static_cast< int >(dest_height / ratio);
+    }
+    else if( height > width ) {
+        dest_width = static_cast< int >(dest_width * ratio);
+    }
+    return pixbuf->scale_simple( dest_width, dest_height, Gdk::INTERP_BILINEAR );
+}
+
+/**
+ * The process callback for this JACK application is called in a
+ * special realtime thread once for each audio cycle.
+ *
+ */
+
+int DigitalDJ::process (jack_nframes_t nframes, void *arg)
+{
+    sample_t *out[2], *in[2];
+    size_t num_bytes_to_read, num_bytes, num_samples;
+    DigitalDJ *dj = (DigitalDJ *)arg;
+
+    for (size_t i = 0; i < 2; i++) {
+        out[i] = (sample_t *) jack_port_get_buffer (dj->jack_output_port(i), nframes);
+        in[i] = (sample_t *) jack_port_get_buffer (dj->jack_input_port(i), nframes);
+    }
+
+    num_bytes_to_read = sizeof(sample_t) * nframes;
+    num_bytes = jack_ringbuffer_read(dj->jack_ringbuffer().get(), (char*)out[0], num_bytes_to_read);
+    num_samples = num_bytes / sizeof(sample_t);
+    for (size_t i = 0; i < num_samples; i++) {
+        out[0][i] *= 1.5;
+        out[1][i] = out[0][i] ;
+        out[0][i] += in[0][i] * quiet_factor;
+        out[1][i] += in[1][i] * quiet_factor;
+        
+    }
+    for (size_t i = num_samples; i < nframes; i++) {
+        out[0][i] = in[0][i];
+        out[1][i] = in[1][i];
+    }
+    return 0;
+}
+
+
+
 bool DigitalDJ::handle_bindata(const Xmms::bin& data) {
     
     Glib::RefPtr< Gdk::Pixbuf > image;
     
     try {
         Glib::RefPtr<Gdk::PixbufLoader> loader = Gdk::PixbufLoader::create();
-        std::cout << data.size() << " is size of bindata." << std::endl;
-        
         loader->write( data.c_str(), data.size() );
         loader->close();
-        image = scale_pixbuf( loader->get_pixbuf() );
+        image = this->scale_pixbuf( loader->get_pixbuf() );
         notify_notification_set_image_from_pixbuf (notification_, image->gobj());
     }
     catch ( Glib::Error& e ) {
@@ -210,8 +244,7 @@ bool DigitalDJ::handle_bindata(const Xmms::bin& data) {
     
     GError *gerr = 0;
     notify_notification_show (notification_, &gerr);
-    
-    
+
     return true;
 }
 
@@ -287,27 +320,11 @@ bool DigitalDJ::my_current_id(const int& id) {
         std::cout << "medialib get info returns error, "
                   << err.what() << std::endl;
     }
-    /*
-  if(!xmmsv_dict_get (infos, "picture_front", &dict_entry) || !xmmsv_get_string (dict_entry, &val)) {
-    val = NULL;
-  }
-  
-  if (val != NULL) {
-    result = xmmsc_bindata_retrieve(async_connection, val);
-    xmmsc_result_wait (result);
-    return_value = xmmsc_result_get_value (result);
-    if (xmmsv_is_error (return_value) && xmmsv_get_error (return_value, &err_buf)) {
-      fprintf (stderr, "bindata retrieve returns error, %s\n", err_buf);
-    } else {
-      handle_bindata(return_value);
-    }
-  }
-  
-*/
+
     notify_notification_update (notification_, msg.c_str(), NULL, NULL);
-    jack_ringbuffer_reset(jack_ringbuf_.get());
+    jack_ringbuffer_reset(rb_.get());
     
-    festival_synth(say.c_str());
+    se_->speek(say, rb_, sr_);
     return true;
     
 }
@@ -329,7 +346,7 @@ void DigitalDJ::setup_jack() {
     jack_options_t jack_options = JackNullOption;
     jack_status_t status;
 
-    jack_ringbuf_ = shared_ptr<jack_ringbuffer_t>(jack_ringbuffer_create(RB_size), RB_deleter());
+    rb_ = shared_ptr<jack_ringbuffer_t>(jack_ringbuffer_create(RB_size), RB_deleter());
 
     string name = "DigitalDJ";
 
@@ -347,7 +364,7 @@ void DigitalDJ::setup_jack() {
         fprintf (stderr, "JACK server started\n");
     }
     
-    sample_rate_ = jack_get_sample_rate(jack_client_);
+    sr_ = jack_get_sample_rate(jack_client_);
     jack_set_process_callback (jack_client_, process, this);
 
     jack_output_ports_[0] = jack_port_register (jack_client_, "output_l",
@@ -389,20 +406,6 @@ void DigitalDJ::teardown_jack() {
         jack_client_close(jack_client_);
     }
     
-}
-
-void DigitalDJ::setup_festival() {
-    
-    int heap_size = 20000000;  // default scheme heap size
-    int load_init_files = 1; // we want the festival init files loaded
-    vector<string> voices = {"cmu_us_awb_cg",
-                             "cmu_us_rms_cg", "cmu_us_slt_cg",
-                             "cmu_us_awb_arctic_clunits",
-                             "cmu_us_bdl_arctic_clunits", "cmu_us_clb_arctic_clunits",
-                             "cmu_us_jmk_arctic_clunits", "cmu_us_rms_arctic_clunits",
-                             "cmu_us_slt_arctic_clunits", "kal_diphone", "rab_diphone" };
-    festival_initialize(load_init_files,heap_size);
-    festival_synth("Hi.  I am your synthetic xmms2, jack DJ.");
 }
 
 void DigitalDJ::setup_signal_handler() {

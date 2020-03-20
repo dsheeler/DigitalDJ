@@ -1,7 +1,5 @@
 PROGS = digitalDJ
 
-all: $(PROGS)
-
 CC = g++ -std=c++17
 
 LFLAGS = /usr/lib/libFestival.so -lestools -lestbase -leststring \
@@ -28,6 +26,11 @@ SRCS = digitalDJ.cpp
 OBJS = $(SRCS:.cpp=.o)
 HDRS =
 
+all: $(PROGS)
+
+debug: CFLAGS += -g
+debug: $(PROGS)
+
 .SUFFIXES:
 
 .SUFFIXES: .cpp
@@ -37,9 +40,6 @@ HDRS =
 
 digitalDJ: ${OBJS}
 	${CC} -o $@ ${OBJS} ${LFLAGS}
-
-#notification: ${OBJS}
-#	${CC} -o $@ ${OBJS} ${LFLAGS}
 
 clean:
 	rm -f ${OBJS} $(PROGS:%=%.o)
