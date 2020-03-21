@@ -61,31 +61,8 @@ FestivalSpeechEngine::FestivalSpeechEngine() {
 void FestivalSpeechEngine::speek(const string& to_say,
                                  shared_ptr<jack_ringbuffer_t> rb,
                                  jack_nframes_t sr) {
-    /*Strip out annoying [Explicit] from title.*/
-    std::string edited_text(to_say);
-    std::size_t found = edited_text.find("[Explicit]");
-    if (found != edited_text.npos) {
-        edited_text.erase(found, 10);
-    }
-    
-    /*Replace '&' with 'and'.*/
-    found = edited_text.find(" & ");
-    while (found != edited_text.npos) {
-        std::string replacement(" and ");
-        edited_text.replace(found, 3, replacement, 0, replacement.size());
-        found = edited_text.find(" & ");
-    }
-    
-    /*Replace 'feat.' with 'featuring'.*/
-    std::string toReplace = "feat.";
-    found = edited_text.find(toReplace);
-    if (found != edited_text.npos) {
-        std::string replacement("featuring");
-        edited_text.replace(found, toReplace.size(), replacement, 0, replacement.size());
-    }
-    
     EST_Wave wave;
-    festival_text_to_wave(edited_text.c_str(), wave);
+    festival_text_to_wave(to_say.c_str(), wave);
     double scale = 1/32768.0;
     wave.resample(sr);
     
@@ -323,8 +300,30 @@ bool DigitalDJ::my_current_id(const int& id) {
 
     notify_notification_update (notification_, msg.c_str(), NULL, NULL);
     jack_ringbuffer_reset(rb_.get());
+
+    /*Strip out annoying [Explicit] from title.*/
+    std::string edited_text(say);
+    std::size_t found = edited_text.find("[Explicit]");
+    if (found != edited_text.npos) {
+        edited_text.erase(found, 10);
+    }
     
-    se_->speek(say, rb_, sr_);
+    /*Replace '&' with 'and'.*/
+    found = edited_text.find(" & ");
+    while (found != edited_text.npos) {
+        std::string replacement(" and ");
+        edited_text.replace(found, 3, replacement, 0, replacement.size());
+        found = edited_text.find(" & ");
+    }
+    
+    /*Replace 'feat.' with 'featuring'.*/
+    std::string toReplace = "feat.";
+    found = edited_text.find(toReplace);
+    if (found != edited_text.npos) {
+        std::string replacement("featuring");
+        edited_text.replace(found, toReplace.size(), replacement, 0, replacement.size());
+    }
+    se_->speek(edited_text, rb_, sr_);
     return true;
     
 }

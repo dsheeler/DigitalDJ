@@ -1,4 +1,6 @@
-PROGS = digitalDJ
+PROGNAME = digitalDJ
+PREFIX=/usr/local
+BINDIR=$(PREFIX)/bin
 
 CC = g++ -std=c++17
 
@@ -26,10 +28,10 @@ SRCS = digitalDJ.cpp
 OBJS = $(SRCS:.cpp=.o)
 HDRS =
 
-all: $(PROGS)
+all: $(PROGNAME)
 
 debug: CFLAGS += -g
-debug: $(PROGS)
+debug: $(PROGNAME)
 
 .SUFFIXES:
 
@@ -41,5 +43,11 @@ debug: $(PROGS)
 digitalDJ: ${OBJS}
 	${CC} -o $@ ${OBJS} ${LFLAGS}
 
+install: all
+	install $(PROGNAME) $(BINDIR)
+
+uninstall:
+	rm -f $(BINDIR)/$(PROGNAME)
+
 clean:
-	rm -f ${OBJS} $(PROGS:%=%.o)
+	rm -f ${OBJS} $(PROGNAME:%=%.o)
