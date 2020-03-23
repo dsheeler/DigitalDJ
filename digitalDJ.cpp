@@ -46,7 +46,7 @@ class FestivalSpeechEngine : public SpeechEngine {
 };
 
 FestivalSpeechEngine::FestivalSpeechEngine() {
-    int heap_size = 20000000;  // default scheme heap size
+    int heap_size = 20'000'000;  // default scheme heap size
     int load_init_files = 1; // we want the festival init files loaded
     vector<string> voices = {"cmu_us_awb_cg",
                              "cmu_us_rms_cg", "cmu_us_slt_cg",
@@ -102,8 +102,7 @@ class DigitalDJ {
         jack_port_t *jack_input_port(int i);
         auto main_loop() { return ml_; }
         shared_ptr<jack_ringbuffer_t> jack_ringbuffer() { return rb_; }
-        void main_loop_run() { g_main_loop_run(ml_); }
-        void main_loop_quit() { g_main_loop_quit(ml_); }
+       
     private:
         unique_ptr<SpeechEngine> se_;
         Xmms::Client xmms2_client_;
@@ -316,8 +315,17 @@ bool DigitalDJ::my_current_id(const int& id) {
         found = edited_text.find(" & ");
     }
     
+    /*Remove [, ], and /.*/
+    auto toRemove = vector<string>{"[", "]", "/"};
+    for (auto s : toRemove) {
+        found = edited_text.find(s);
+        if (found != edited_text.npos) {
+            edited_text.erase(edited_text.begin() + found);
+        }
+    }
+    
     /*Replace 'feat.' with 'featuring'.*/
-    std::string toReplace = "feat.";
+    auto toReplace = "feat."s;
     found = edited_text.find(toReplace);
     if (found != edited_text.npos) {
         std::string replacement("featuring");
