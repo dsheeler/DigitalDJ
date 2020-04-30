@@ -7,6 +7,7 @@
 
 #include <signal.h>
 #include <jack/jack.h>
+#include <jack/midiport.h>
 #include <jack/ringbuffer.h>
 #include <xmms2/xmmsclient/xmmsclient++.h>
 #include <xmms2/xmmsclient/xmmsclient++-glib.h>
@@ -17,6 +18,7 @@
 #include <gdkmm-2.4/gdkmm/pixbufloader.h>
 #include <gdkmm-2.4/gdkmm/pixbuf.h>
 #include <glibmm-2.4/glibmm.h>
+#include <sigc++-2.0/sigc++/sigc++.h>
 #include <festival/festival.h>
 
 #define ICON_PATH "/usr/local/share/icons/hicolor/64x64/apps/xmms2.png"
@@ -24,6 +26,7 @@
 typedef jack_default_audio_sample_t sample_t;
 
 const int RB_size = 3276800;
+const int RB_size_midi = 1024*3*8;
 const double quiet_factor = 0.4;
 
 static volatile sig_atomic_t signal_flag;
@@ -98,10 +101,18 @@ class DigitalDJ {
         bool my_current_id(const int& id);
         bool error_handler(const std::string& error);
         bool handle_bindata(const Xmms::bin& data);
+        bool midi_events_check();
+        int xmms2_stop();
+        int xmms2_toggle();
+        int xmms2_next();
+        int xmms2_prev();
         jack_port_t *jack_output_port(int i);
         jack_port_t *jack_input_port(int i);
+        jack_port_t *jack_input_port_midi();
+        
         auto main_loop() { return ml_; }
         shared_ptr<jack_ringbuffer_t> jack_ringbuffer() { return rb_; }
+        shared_ptr<jack_ringbuffer_t> jack_ringbuffer_midi() { return rb_midi_; }
        
     private:
         unique_ptr<SpeechEngine> se_;
@@ -109,8 +120,9 @@ class DigitalDJ {
         Xmms::Client xmms2_sync_client_;
         NotifyNotification *notification_;
         jack_port_t  *jack_output_ports_[2], *jack_input_ports_[2];
+        jack_port_t *jack_input_port_midi_;
         jack_client_t *jack_client_;
-        shared_ptr<jack_ringbuffer_t> rb_;
+        shared_ptr<jack_ringbuffer_t> rb_, rb_midi_;
         jack_nframes_t sr_ = 48000;
         GMainLoop *ml_;
         void setup_jack();
@@ -129,7 +141,6 @@ struct RB_deleter {
 DigitalDJ::DigitalDJ() :
     xmms2_client_(std::string("DigitalDJ")),
     xmms2_sync_client_(std::string("SyncDigitalDJ")) {
-    
     xmms2_client_.connect(std::getenv("XMMS_PATH"));
     xmms2_sync_client_.connect(std::getenv("XMMS_PATH"));
     notify_init("xmms2-jack-dj");
@@ -143,6 +154,9 @@ DigitalDJ::DigitalDJ() :
                 );
 
     xmms2_client_.setMainloop( new Xmms::GMainloop( xmms2_client_.getConnection() ) );
+
+    sigc::connection conn = Glib::signal_timeout().connect(sigc::mem_fun(*this,
+                                                                   &DigitalDJ::midi_events_check), 50);
     ml_ = g_main_loop_new( 0, 0 );
 }
 
@@ -176,6 +190,9 @@ auto DigitalDJ::scale_pixbuf( Glib::RefPtr< Gdk::Pixbuf > const& pixbuf ) {
 int DigitalDJ::process (jack_nframes_t nframes, void *arg)
 {
     sample_t *out[2], *in[2];
+    jack_nframes_t event_count;
+    jack_midi_event_t event_in;
+    void *in_midi;
     size_t num_bytes_to_read, num_bytes, num_samples;
     DigitalDJ *dj = (DigitalDJ *)arg;
 
@@ -183,7 +200,23 @@ int DigitalDJ::process (jack_nframes_t nframes, void *arg)
         out[i] = (sample_t *) jack_port_get_buffer (dj->jack_output_port(i), nframes);
         in[i] = (sample_t *) jack_port_get_buffer (dj->jack_input_port(i), nframes);
     }
+    in_midi = jack_port_get_buffer(dj->jack_input_port_midi(), nframes);
+    event_count = jack_midi_get_event_count(in_midi);
+  
+    for (size_t i = 0 ; i < event_count; i++) {
+      jack_midi_event_get(&event_in, in_midi, i);
+      if (event_in.size != 3 ||
+          (event_in.buffer[0] & 0xF0) != 0xB0 ||
+          event_in.buffer[1] > 127 ||
+          event_in.buffer[2] > 127)
+      {
+        continue;
+      }
+      assert(event_in.time < nframes);
 
+      jack_ringbuffer_write(dj->jack_ringbuffer_midi().get(), (char*)&event_in, sizeof(event_in));
+    }
+    
     num_bytes_to_read = sizeof(sample_t) * nframes;
     num_bytes = jack_ringbuffer_read(dj->jack_ringbuffer().get(), (char*)out[0], num_bytes_to_read);
     num_samples = num_bytes / sizeof(sample_t);
@@ -224,6 +257,143 @@ bool DigitalDJ::handle_bindata(const Xmms::bin& data) {
     return true;
 }
 
+bool DigitalDJ::midi_events_check() {
+    jack_midi_event_t event;
+    while (jack_ringbuffer_read_space(rb_midi_.get()) >= sizeof(event)) {
+        jack_ringbuffer_read(rb_midi_.get(), (char *)&event, sizeof(event));
+        printf(
+              "%u: CC#%u -> %u\n",
+              (unsigned int)(event.buffer[0]),
+              (unsigned int)event.buffer[1],
+              (unsigned int)event.buffer[2]);
+        switch(event.buffer[1]) {
+            case 41: 
+                if (event.buffer[2] == 127) xmms2_toggle();
+                break;
+            case 42:
+                if (event.buffer[2] == 127) xmms2_stop();
+                break;
+            case 43:
+                if (event.buffer[2] == 127) xmms2_prev();
+                break;
+            case 44:
+                if (event.buffer[2] == 127) xmms2_next();
+                break;
+        }
+    }
+    return true;
+}
+
+int DigitalDJ::xmms2_stop() {
+    xmmsc_result_t *result;
+    xmmsv_t *return_value;
+    const char *err_buf;
+    result = xmmsc_playback_stop(xmms2_client_.getConnection());
+    xmmsc_result_wait(result);
+    return_value = xmmsc_result_get_value (result);
+    if (xmmsv_is_error (return_value) &&
+     xmmsv_get_error (return_value, &err_buf)) {
+      fprintf (stderr, "playback status returned error, %s",
+       err_buf);
+      xmmsc_result_unref(result);
+      return -1;
+    }
+    xmmsc_result_unref (result);
+    return 0;
+}
+
+int DigitalDJ::xmms2_toggle() {
+    xmmsc_result_t *result;
+    xmmsv_t *return_value;
+    int32_t status;
+    const char *err_buf;
+    result = xmmsc_playback_status(xmms2_client_.getConnection());
+    xmmsc_result_wait(result);
+    return_value = xmmsc_result_get_value (result);
+    if (xmmsv_is_error (return_value) &&
+            xmmsv_get_error (return_value, &err_buf)) {
+        fprintf (stderr, "playback status returned error, %s",
+                 err_buf);
+        xmmsc_result_unref(result);
+        return -1;
+    }
+    xmmsv_get_int32 (return_value, &status);
+    xmmsc_result_unref(result);
+    if (status == XMMS_PLAYBACK_STATUS_PLAY)
+        result = xmmsc_playback_pause(xmms2_client_.getConnection());
+    else
+        result = xmmsc_playback_start(xmms2_client_.getConnection());
+    xmmsc_result_wait(result);
+    return_value = xmmsc_result_get_value (result);
+    if (xmmsv_is_error (return_value) &&
+            xmmsv_get_error (return_value, &err_buf)) {
+        fprintf (stderr, "playback toggle returned error, %s",
+                 err_buf);
+        xmmsc_result_unref(result);
+        return -1;
+    }
+    xmmsc_result_unref (result);
+    return 0;
+}
+
+int DigitalDJ::xmms2_next() {
+    xmmsc_result_t *result;
+    xmmsv_t *return_value;
+    const char *err_buf;
+    result = xmmsc_playlist_set_next_rel(xmms2_client_.getConnection(), 1);
+    xmmsc_result_wait(result);
+    return_value = xmmsc_result_get_value (result);
+    if (xmmsv_is_error (return_value) &&
+     xmmsv_get_error (return_value, &err_buf)) {
+      fprintf (stderr, "playlist_set_next_rel returned error, %s",
+       err_buf);
+      xmmsc_result_unref(result);
+      return -1;
+    }
+    xmmsc_result_unref (result);
+    result = xmmsc_playback_tickle(xmms2_client_.getConnection());
+    xmmsc_result_wait(result);
+    return_value = xmmsc_result_get_value (result);
+    if (xmmsv_is_error (return_value) &&
+     xmmsv_get_error (return_value, &err_buf)) {
+      fprintf (stderr, "playback_tickle returned error, %s",
+       err_buf);
+      xmmsc_result_unref(result);
+      return -1;
+    }
+    xmmsc_result_unref (result);
+    return 0;
+}
+
+int DigitalDJ::xmms2_prev() {
+    xmmsc_result_t *result;
+    xmmsv_t *return_value;
+    const char *err_buf;
+    result = xmmsc_playlist_set_next_rel(xmms2_client_.getConnection(), -1);
+    xmmsc_result_wait(result);
+    return_value = xmmsc_result_get_value (result);
+    if (xmmsv_is_error (return_value) &&
+            xmmsv_get_error (return_value, &err_buf)) {
+        fprintf (stderr, "playlist_set_next_rel returned error, %s",
+                 err_buf);
+        xmmsc_result_unref(result);
+        return -1;
+    }
+    xmmsc_result_unref (result);
+    result = xmmsc_playback_tickle(xmms2_client_.getConnection());
+    xmmsc_result_wait(result);
+    return_value = xmmsc_result_get_value (result);
+    if (xmmsv_is_error (return_value) &&
+            xmmsv_get_error (return_value, &err_buf)) {
+        fprintf (stderr, "playback_tickle returned error, %s",
+                 err_buf);
+        xmmsc_result_unref(result);
+        return -1;
+    }
+    xmmsc_result_unref (result);
+    return 0;
+}
+
 jack_port_t *DigitalDJ::jack_output_port(int i)
 {
     if (i < 0 || i > 1) {
@@ -240,6 +410,11 @@ jack_port_t *DigitalDJ::jack_input_port(int i)
     } else {
         return jack_input_ports_[i];
     }
+}
+
+jack_port_t *DigitalDJ::jack_input_port_midi()
+{
+    return jack_input_port_midi_;
 }
 
 bool DigitalDJ::my_current_id(const int& id) {
@@ -354,6 +529,7 @@ void DigitalDJ::setup_jack() {
     jack_status_t status;
 
     rb_ = shared_ptr<jack_ringbuffer_t>(jack_ringbuffer_create(RB_size), RB_deleter());
+    rb_midi_ = shared_ptr<jack_ringbuffer_t>(jack_ringbuffer_create(RB_size_midi), RB_deleter());
 
     string name = "DigitalDJ";
 
@@ -375,27 +551,31 @@ void DigitalDJ::setup_jack() {
     jack_set_process_callback (jack_client_, process, this);
 
     jack_output_ports_[0] = jack_port_register (jack_client_, "output_l",
-                                             JACK_DEFAULT_AUDIO_TYPE,
-                                             JackPortIsOutput, 0);
+                                                JACK_DEFAULT_AUDIO_TYPE,
+                                                JackPortIsOutput, 0);
     jack_output_ports_[1] = jack_port_register (jack_client_, "output_r",
-                                             JACK_DEFAULT_AUDIO_TYPE,
-                                             JackPortIsOutput, 0);
+                                                JACK_DEFAULT_AUDIO_TYPE,
+                                                JackPortIsOutput, 0);
     
     if ((jack_output_ports_[0] == NULL) ||
             (jack_output_ports_[1] == NULL)) {
         cout << "no more JACK ports available" << endl;
         exit (1);
     }
-    
+
     jack_input_ports_[0] = jack_port_register (jack_client_, "input_l",
-                                             JACK_DEFAULT_AUDIO_TYPE,
-                                             JackPortIsInput, 0);
+                                               JACK_DEFAULT_AUDIO_TYPE,
+                                               JackPortIsInput, 0);
     jack_input_ports_[1] = jack_port_register (jack_client_, "input_r",
-                                             JACK_DEFAULT_AUDIO_TYPE,
-                                             JackPortIsInput, 0);
-    
+                                               JACK_DEFAULT_AUDIO_TYPE,
+                                               JackPortIsInput, 0);
+    jack_input_port_midi_ = jack_port_register(jack_client_, "input_midi",
+                                               JACK_DEFAULT_MIDI_TYPE,
+                                               JackPortIsInput, 0);
+
     if ((jack_input_ports_[0] == NULL) ||
-            (jack_input_ports_[1] == NULL)) {
+            (jack_input_ports_[1] == NULL) ||
+            (jack_input_port_midi_ == NULL)) {
         cout << "no more JACK ports available" << endl;
         exit (1);
     }
@@ -408,7 +588,10 @@ void DigitalDJ::setup_jack() {
 void DigitalDJ::teardown_jack() {
     for (int i = 0; i < 2; ++i) {
         jack_port_unregister(jack_client_, jack_output_ports_[i]);
+        jack_port_unregister(jack_client_, jack_input_ports_[i]);
+        
     }
+    jack_port_unregister(jack_client_, jack_input_port_midi_);
     if (jack_client_) {
         jack_client_close(jack_client_);
     }
