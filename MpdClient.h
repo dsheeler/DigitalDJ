@@ -23,9 +23,10 @@ private:
     int handle_error(string prefix);
     bool io_event_handler(Glib::IOCondition ioc);
     void attach_io_event_handler();
-    void stop_listening(bool clear_events);
+    void stop_listening();
     void start_listening();
     void get_song_info(song_info_t &info);
+    static void state_to_name(mpd_state state, string &name);
 };
 #endif // MPDCLIENT_H
 

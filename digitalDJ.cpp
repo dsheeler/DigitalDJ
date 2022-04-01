@@ -43,7 +43,7 @@ class SpeechEngine {
 public:
     SpeechEngine(shared_ptr<jack_ringbuffer_t> rb, jack_nframes_t sr);
     virtual void speak(const string& to_say) = 0;
-    void process_message(std::string message);
+    void process_message(string& message);
     void stop_speaking();
 
 protected:
@@ -66,7 +66,7 @@ void SpeechEngine::stop_speaking() {
     jack_ringbuffer_reset(rb.get());
 }
 
-void SpeechEngine::process_message(std::string msg) {
+void SpeechEngine::process_message(string& msg) {
     /*Strip out annoying [Explicit] from title.*/
     std::size_t found = msg.find("[Explicit]");
     if (found != msg.npos) {
@@ -79,7 +79,6 @@ void SpeechEngine::process_message(std::string msg) {
         msg.replace(found, 3, replacement, 0, replacement.size());
         found = msg.find(" & ");
     }
-        
     /*Remove [, ], and /.*/
     auto toRemove = vector<string>{"[", "]", "/"};
     for (auto s : toRemove) {
@@ -88,7 +87,6 @@ void SpeechEngine::process_message(std::string msg) {
             msg.erase(msg.begin() + found);
         }
     }
-        
     /*Replace 'feat.' with 'featuring'.*/
     auto toReplace = "feat."s;
     found = msg.find(toReplace);
@@ -114,7 +112,9 @@ FestivalSpeechEngine::FestivalSpeechEngine(shared_ptr<jack_ringbuffer_t> rb, jac
 
 void FestivalSpeechEngine::speak(const string& to_say) {
     EST_Wave wave;
-    festival_text_to_wave(to_say.c_str(), wave);
+    string tmp = to_say;
+    process_message(tmp);
+    festival_text_to_wave(tmp.c_str(), wave);
     double scale = 1/32768.0;
     wave.resample(sr);
 
@@ -199,7 +199,6 @@ bool DigitalDJ::midi_events_check() {
     jack_midi_event_t event;
     while (jack_ringbuffer_read_space(rb_midi_.get()) >= sizeof(event)) {
         jack_ringbuffer_read(rb_midi_.get(), (char *)&event, sizeof(event));
-        printf("Midi Event\n");
         switch(event.buffer[1]) {
             case 41: 
                 if (event.buffer[2] == 127) ms->pause();
@@ -371,7 +370,7 @@ void DigitalDJ::setup_signal_handler() {
 
 void DigitalDJ::on_song_changed(song_info_t info) {
     se->stop_speaking();
-    se->speak("Playing: " + info.title + " by " + info.artist);
+    se->speak(info.title + " by " + info.artist);
 }
 
 void process_signal(DigitalDJ &dj) {
@@ -388,20 +387,11 @@ void process_signal(DigitalDJ &dj) {
 
 int main (int argc, char *argv[]) {
     Gtk::Main kit( argc, argv );
-    
-    try {
-        DigitalDJ dj;
-        thread signal_handler(process_signal, ref(dj));
-        dj.main_loop()->run();
-        signal_handler.join();
-    }
-    catch( Xmms::connection_error& err ) {
-        std::cout << "Connection failed: " << err.what() << std::endl;
-        return EXIT_FAILURE;
-    }
-    
+    DigitalDJ dj;
+    thread signal_handler(process_signal, ref(dj));
+    dj.main_loop()->run();
+    signal_handler.join();
     return EXIT_SUCCESS;
-    
 }
 
 
