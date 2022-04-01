@@ -28,10 +28,13 @@ def configure(cnf):
 
 def build(bld):
   bld(features='cxx', source='MusicServerClient.cpp', target='MusicServerClient.o', use=['GTKMM-3.0'])
-  bld(features='cxx', source='MpdClient.cpp', target='MpdClient.o', use=['GTKMM-3.0'])
+  bld(features='cxx', source='SpeechEngine.cpp', target='SpeechEngine.o', use=['FESTIVAL'])
+  bld(features='cxx', source='FestivalSpeechEngine.cpp', target='FestivalSpeechEngine.o', use=['FESTIVAL'])
+  bld(features='cxx', source='MpdClient.cpp', target='MpdClient.o', use=['MPDCLIENT', 'GTKMM-3.0'])
   bld(features='cxx', source='Xmms2dClient.cpp', target='Xmms2dClient.o', use=['XMMS2-CLIENT-CPP', 'GTKMM-3.0'])
   bld(features='cxx cxxprogram', source='digitalDJ.cpp',
             target='digitalDJ', use=['MpdClient.o', 'Xmms2dClient.o', 'MusicServerClient.o',
+            'SpeechEngine.o', 'FestivalSpeechEngine.o',
             'FLAGS', 'JACK', 'ESTSTRING', 'ESTBASE',
             'ESTOOLS', 'FESTIVAL', 'NCURSES', 'NOTIFY', 'XMMS2-CLIENT-CPP-GLIB',
             'XMMS-CLIENT-CPP', 'GTKMM-3.0' ,'XMMS2-CLIENT-CPP', 'ASOUND',

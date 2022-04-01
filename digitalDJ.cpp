@@ -10,7 +10,6 @@
 #include <jack/jack.h>
 #include <jack/midiport.h>
 #include <jack/ringbuffer.h>
-
 #include <glib-2.0/glib.h>
 #include <libnotify/notification.h>
 #include <libnotify/notify.h>
@@ -18,8 +17,10 @@
 #include <gdkmm-2.4/gdkmm/pixbuf.h>
 #include <glibmm-2.4/glibmm.h>
 #include <sigc++-2.0/sigc++/sigc++.h>
-#include <festival/festival.h>
 
+#include "SpeechEngine.h"
+#include "FestivalSpeechEngine.h"
+#include "MusicServerClient.h"
 #include "MpdClient.h"
 #include "Xmms2dClient.h"
 
@@ -39,105 +40,6 @@ static volatile __sig_atomic_t signal_flag;
 
 void set_signal_flag(int signal) { signal_flag = signal; }
 
-class SpeechEngine {
-public:
-    SpeechEngine(shared_ptr<jack_ringbuffer_t> rb, jack_nframes_t sr);
-    virtual void speak(const string& to_say) = 0;
-    void process_message(string& message);
-    void stop_speaking();
-
-protected:
-    shared_ptr<jack_ringbuffer_t> rb;
-    jack_nframes_t sr;
-};
-
-class FestivalSpeechEngine : public SpeechEngine {
-public:
-    FestivalSpeechEngine(shared_ptr<jack_ringbuffer_t> rb, jack_nframes_t sr);
-    void speak(const string& to_say) override;
-};
-
-SpeechEngine::SpeechEngine(shared_ptr<jack_ringbuffer_t> rb, jack_nframes_t sr) {
-    this->rb = rb;
-    this->sr = sr;
-}
-
-void SpeechEngine::stop_speaking() {
-    jack_ringbuffer_reset(rb.get());
-}
-
-void SpeechEngine::process_message(string& msg) {
-    /*Strip out annoying [Explicit] from title.*/
-    std::size_t found = msg.find("[Explicit]");
-    if (found != msg.npos) {
-        msg.erase(found, 10);
-    }
-    /*Replace '&' with 'and'.*/
-    found = msg.find(" & ");
-    while (found != msg.npos) {
-        std::string replacement(" and ");
-        msg.replace(found, 3, replacement, 0, replacement.size());
-        found = msg.find(" & ");
-    }
-    /*Remove [, ], and /.*/
-    auto toRemove = vector<string>{"[", "]", "/"};
-    for (auto s : toRemove) {
-        found = msg.find(s);
-        if (found != msg.npos) {
-            msg.erase(msg.begin() + found);
-        }
-    }
-    /*Replace 'feat.' with 'featuring'.*/
-    auto toReplace = "feat."s;
-    found = msg.find(toReplace);
-    if (found != msg.npos) {
-        std::string replacement("featuring");
-        msg.replace(found, toReplace.size(), replacement, 0, replacement.size());
-    }
-}
-
-FestivalSpeechEngine::FestivalSpeechEngine(shared_ptr<jack_ringbuffer_t> rb, jack_nframes_t sr) :
-    SpeechEngine::SpeechEngine(rb, sr) {
-    int heap_size = 20'000'000;  // default scheme heap size
-    int load_init_files = 1; // we want the festival init files loaded
-    vector<string> voices = {"cmu_us_awb_cg",
-                             "cmu_us_rms_cg", "cmu_us_slt_cg",
-                             "cmu_us_awb_arctic_clunits",
-                             "cmu_us_bdl_arctic_clunits", "cmu_us_clb_arctic_clunits",
-                             "cmu_us_jmk_arctic_clunits", "cmu_us_rms_arctic_clunits",
-                             "cmu_us_slt_arctic_clunits", "kal_diphone", "rab_diphone" };
-    festival_initialize(load_init_files,heap_size);
-    festival_eval_command("(voice_cmu_us_jmk_arctic_clunits)");
-}
-
-void FestivalSpeechEngine::speak(const string& to_say) {
-    EST_Wave wave;
-    string tmp = to_say;
-    process_message(tmp);
-    festival_text_to_wave(tmp.c_str(), wave);
-    double scale = 1/32768.0;
-    wave.resample(sr);
-
-    int numsamples = wave.num_samples();
-    sample_t jbuf[numsamples];
-
-    for (int i = 0; i < numsamples; i++) {
-        jbuf[i] =  wave(i) * scale;
-    }
-
-    size_t num_bytes_to_write;
-
-    num_bytes_to_write = numsamples*sizeof(sample_t);
-
-    do {
-        size_t nwritten = jack_ringbuffer_write(rb.get(), (char*)jbuf, num_bytes_to_write);
-        if (nwritten < num_bytes_to_write && num_bytes_to_write > 0) {
-            usleep(100000);
-        }
-        num_bytes_to_write -= nwritten;
-    } while (num_bytes_to_write > 0);
-}
-
 struct RB_deleter { 
     void operator()(jack_ringbuffer_t* r) const {
         std::cout << "free jack ringbuffer...\n";
@@ -151,15 +53,11 @@ public:
     ~DigitalDJ();
 
     auto main_loop() { return ml; }
-    
 private:
-
     bool midi_events_check();
-
     jack_port_t *jack_output_port(int i);
     jack_port_t *jack_input_port(int i);
     jack_port_t *jack_input_port_midi();
-
     shared_ptr<jack_ringbuffer_t> jack_ringbuffer() { return rb_; }
     shared_ptr<jack_ringbuffer_t> jack_ringbuffer_midi() { return rb_midi_; }
     Glib::RefPtr<Glib::MainLoop> ml;
@@ -179,16 +77,16 @@ private:
 };
 
 DigitalDJ::DigitalDJ() {
-    notify_init("xmms2-jack-dj");
-    notification_ = notify_notification_new("", nullptr, ICON_PATH);
+    notify_init("DigitalDJ");
+    notification_ = notify_notification_new("", nullptr, nullptr);
     setup_jack();
     ml = Glib::MainLoop::create(true);
     se = make_unique<FestivalSpeechEngine>(rb_, sr_);
     ms = make_unique<MpdClient>(ml);
     ms->song_changed().connect(sigc::mem_fun(*this, &DigitalDJ::on_song_changed));
     setup_signal_handler();
-    sigc::connection conn = Glib::signal_timeout().connect(sigc::mem_fun(*this,
-                                                                   &DigitalDJ::midi_events_check), 50);
+    sigc::connection conn =
+            Glib::signal_timeout().connect(sigc::mem_fun(*this, &DigitalDJ::midi_events_check), 50);
 }
 
 DigitalDJ::~DigitalDJ() { 
@@ -358,7 +256,6 @@ void DigitalDJ::teardown_jack() {
     if (jack_client_) {
         jack_client_close(jack_client_);
     }
-    
 }
 
 void DigitalDJ::setup_signal_handler() {
@@ -370,7 +267,10 @@ void DigitalDJ::setup_signal_handler() {
 
 void DigitalDJ::on_song_changed(song_info_t info) {
     se->stop_speaking();
-    se->speak(info.title + " by " + info.artist);
+    string msg = info.title + " by " + info.artist;
+    se->speak(msg);
+    notify_notification_update (notification_, msg.c_str(), NULL, NULL);
+    notify_notification_show(notification_, nullptr);
 }
 
 void process_signal(DigitalDJ &dj) {
