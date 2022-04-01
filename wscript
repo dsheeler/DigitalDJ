@@ -11,6 +11,7 @@ def configure(cnf):
       uselib_store='GTKMM-3.0')
   cnf.check_cfg(package='libnotify', args='--libs --cflags',
       uselib_store='NOTIFY')
+  cnf.check(lib='mpdclient', uselib_store='MPDCLIENT')
   cnf.check(lib='asound', uselib_store='ASOUND')
   cnf.check(lib='jack', uselib_store='JACK')
   cnf.check(lib='omp', uselib_store='OMP')
@@ -26,8 +27,12 @@ def configure(cnf):
 
 
 def build(bld):
-        bld(features='cxx cxxprogram', source='digitalDJ.cpp',
-            target='digitalDJ', use=['FLAGS', 'JACK', 'ESTSTRING', 'ESTBASE',
+  bld(features='cxx', source='MusicServerClient.cpp', target='MusicServerClient.o', use=['GTKMM-3.0'])
+  bld(features='cxx', source='MpdClient.cpp', target='MpdClient.o', use=['GTKMM-3.0'])
+  bld(features='cxx', source='Xmms2dClient.cpp', target='Xmms2dClient.o', use=['XMMS2-CLIENT-CPP', 'GTKMM-3.0'])
+  bld(features='cxx cxxprogram', source='digitalDJ.cpp',
+            target='digitalDJ', use=['MpdClient.o', 'Xmms2dClient.o', 'MusicServerClient.o',
+            'FLAGS', 'JACK', 'ESTSTRING', 'ESTBASE',
             'ESTOOLS', 'FESTIVAL', 'NCURSES', 'NOTIFY', 'XMMS2-CLIENT-CPP-GLIB',
             'XMMS-CLIENT-CPP', 'GTKMM-3.0' ,'XMMS2-CLIENT-CPP', 'ASOUND',
-            'OMP'])
+            'MPDCLIENT', 'OMP'])

@@ -32,13 +32,13 @@ POSSIBILITY OF SUCH DAMAGE.
 
 import os, sys, inspect
 
-VERSION="2.0.20"
-REVISION="38e2459e61ec0d08a31123aaf5c5a81f"
+VERSION="2.0.23"
+REVISION="d0060ecb5139525e6acae157d1c20314"
 GIT="x"
 INSTALL=''
-C1='#+'
-C2='#*'
-C3='#%'
+C1='#2'
+C2='#,'
+C3='#*'
 cwd = os.getcwd()
 join = os.path.join
 
@@ -147,7 +147,7 @@ def find_lib():
 
 	dirname = '%s-%s-%s' % (WAF, VERSION, REVISION)
 	for i in (INSTALL,'/usr','/usr/local','/opt'):
-		w = test(i + '/lib/' + 'python3.8/site-packages/waf')
+		w = test(i + '/lib/' + 'python3.10/site-packages/waf')
 		if w: return w
 
 	#waf-local
