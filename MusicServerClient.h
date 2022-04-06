@@ -11,8 +11,8 @@ typedef struct song_info {
     string title;
     string artist;
     string album;
+    Glib::RefPtr<Gdk::Pixbuf> albumart;
 } song_info_t;
-
 
 class MusicServerClient {
 public:
@@ -25,6 +25,7 @@ public:
 protected:
     Glib::RefPtr<Glib::MainLoop> ml;
     sigc::signal<void(song_info_t)> song_change_signal;
+    Glib::RefPtr<Gdk::Pixbuf> scale_pixbuf( Glib::RefPtr< Gdk::Pixbuf > const& pixbuf );
 };
 
 #endif // MUSICSERVERCLIENT_H

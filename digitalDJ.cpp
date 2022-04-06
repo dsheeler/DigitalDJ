@@ -15,6 +15,8 @@
 #include <libnotify/notify.h>
 #include <gdkmm-2.4/gdkmm/pixbufloader.h>
 #include <gdkmm-2.4/gdkmm/pixbuf.h>
+#include <gdkmm.h>
+#include <gtkmm.h>
 #include <glibmm-2.4/glibmm.h>
 #include <sigc++-2.0/sigc++/sigc++.h>
 
@@ -80,7 +82,7 @@ DigitalDJ::DigitalDJ() {
     notify_init("DigitalDJ");
     notification_ = notify_notification_new("", nullptr, nullptr);
     setup_jack();
-    ml = Glib::MainLoop::create(true);
+    ml = Glib::MainLoop::create(false);
     se = make_unique<FestivalSpeechEngine>(rb_, sr_);
     ms = make_unique<MpdClient>(ml);
     ms->song_changed().connect(sigc::mem_fun(*this, &DigitalDJ::on_song_changed));
@@ -269,7 +271,9 @@ void DigitalDJ::on_song_changed(song_info_t info) {
     se->stop_speaking();
     string msg = info.title + " by " + info.artist;
     se->speak(msg);
-    notify_notification_update (notification_, msg.c_str(), NULL, NULL);
+    notify_notification_update (notification_, msg.c_str(), nullptr, nullptr);
+    cout << msg << endl;
+    notify_notification_set_image_from_pixbuf(notification_, info.albumart->gobj());
     notify_notification_show(notification_, nullptr);
 }
 

@@ -1,25 +1,9 @@
 #include "Xmms2dClient.h"
 
-static auto scale_pixbuf( Glib::RefPtr< Gdk::Pixbuf > const& pixbuf ) {
-    const int width = pixbuf->get_width();
-    const int height = pixbuf->get_height();
-    int dest_width = 128;
-    int dest_height = 128;
-    double ratio = width / static_cast< double >(height);
-    
-    if( width > height ) {
-        dest_height = static_cast< int >(dest_height / ratio);
-    }
-    else if( height > width ) {
-        dest_width = static_cast< int >(dest_width * ratio);
-    }
-    return pixbuf->scale_simple( dest_width, dest_height, Gdk::INTERP_BILINEAR );
-}
-
 Xmms2dClient::Xmms2dClient(Glib::RefPtr<Glib::MainLoop> gml) : MusicServerClient(gml) {
     client = new Xmms::Client(std::string("DigitalDJ"));
     sync_client = new Xmms::Client(std::string("SyncDigitalDJ"));
-    client->connect(std::getenv("XMMS2_PATH"));
+    client->connect(std::getenv("XMMS_PATH"));
     sync_client->connect(std::getenv("XMMS_PATH"));
 
     client->playback.broadcastCurrentID()(

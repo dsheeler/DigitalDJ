@@ -2,6 +2,7 @@ def options(opt):
   opt.load('compiler_cxx')
 
 def configure(cnf):
+  cnf.env.append_unique('CFLAGS', ['-g', '-O2'])
   cnf.load('compiler_cxx')
   cnf.check_cfg(package='xmms2-client-cpp', args='--libs --cflags',
       uselib_store='XMMS2-CLIENT-CPP')
