@@ -1,0 +1,14 @@
+[Unit]
+Description=Digital DJ
+After=mpd.service
+Requires=mpd.service
+
+[Service]
+ExecStart=/usr/bin/digitalDJ
+
+# allow to use real-time priority 40
+LimitRTPRIO=40
+LimitRTTIME=infinity
+
+[Install]
+WantedBy=default.target

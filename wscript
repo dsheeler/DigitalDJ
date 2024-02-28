@@ -40,3 +40,4 @@ def build(bld):
             'ESTOOLS', 'FESTIVAL', 'NCURSES', 'NOTIFY', 'XMMS2-CLIENT-CPP-GLIB',
             'XMMS-CLIENT-CPP', 'GTKMM-3.0' ,'XMMS2-CLIENT-CPP', 'ASOUND',
             'MPDCLIENT', 'OMP'])
+  bld.install_files('${PREFIX}/lib/systemd/user', ['digitalDJ.service'])

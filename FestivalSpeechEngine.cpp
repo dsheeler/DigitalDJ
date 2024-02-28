@@ -8,7 +8,7 @@ FestivalSpeechEngine::FestivalSpeechEngine(shared_ptr<jack_ringbuffer_t> rb, jac
     SpeechEngine::SpeechEngine(rb, sr) {
     int heap_size = 20'000'000;  // default scheme heap size
     int load_init_files = 1; // we want the festival init files loaded
-    vector<string> voices = {"cmu_us_awb_cg",
+    this->voices = {"cmu_us_awb_cg",
                              "cmu_us_rms_cg", "cmu_us_slt_cg",
                              "cmu_us_awb_arctic_clunits",
                              "cmu_us_bdl_arctic_clunits", "cmu_us_clb_arctic_clunits",
@@ -21,6 +21,9 @@ FestivalSpeechEngine::FestivalSpeechEngine(shared_ptr<jack_ringbuffer_t> rb, jac
 void FestivalSpeechEngine::speak(const string& to_say) {
     EST_Wave wave;
     string tmp = to_say;
+    string voice = voices[rand() % voices.size()];
+    string voice_command = "(voice_" + voice + ")";
+    festival_eval_command(voice_command.c_str());
     process_message(tmp);
     festival_text_to_wave(tmp.c_str(), wave);
     double scale = 1/32768.0;

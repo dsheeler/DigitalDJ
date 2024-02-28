@@ -16,7 +16,6 @@
 #include <gdkmm-2.4/gdkmm/pixbufloader.h>
 #include <gdkmm-2.4/gdkmm/pixbuf.h>
 #include <gdkmm.h>
-#include <gtkmm.h>
 #include <glibmm-2.4/glibmm.h>
 #include <sigc++-2.0/sigc++/sigc++.h>
 
@@ -290,7 +289,7 @@ void process_signal(DigitalDJ &dj) {
 }
 
 int main (int argc, char *argv[]) {
-    Gtk::Main kit( argc, argv );
+    Gtk::Main::init_gtkmm_internals();
     DigitalDJ dj;
     thread signal_handler(process_signal, ref(dj));
     dj.main_loop()->run();
