@@ -5,6 +5,22 @@ to create an MPD client that, upon song change, announces the upcoming song
 title and artist and shows a notification. It also takes midi input that can
 control MPD with pause/play, stop, previous track, and next track operations.
 
+## Building and Installing
+
+```
+$ PREFIX=/usr waf configure
+$ waf
+# waf install
+```
+
+`PREFIX` may be set to any desired installation root, for example `/usr/local`
+or `/usr`.
+
+## Running
+```
+$ digitalDJ
+```
+
 ## MIDI Control of MPD
 Digital DJ has a midi input port that allows contrtol over MPD.
 
@@ -28,3 +44,11 @@ volume of the incoming audio while the DJ is speaking.
 
 Route your MPD output ports to the DJ input ports to hear the lowered volume while
 the DJ makes its announcements. 
+
+## Digital DJ as a user level systemd service
+To enable Digital DJ as a service, run:
+```
+$ systemctl --user enable digitalDJ
+$ systemctl --user start digitalDJ
+```
+
