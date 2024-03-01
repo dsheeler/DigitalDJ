@@ -2,9 +2,12 @@
 Description=Digital DJ
 After=mpd.service
 Requires=mpd.service
+StartLimitIntervalSec=0
 
 [Service]
 ExecStart=/usr/bin/digitalDJ
+Restart=always
+RestartSec=1
 
 # allow to use real-time priority 40
 LimitRTPRIO=40
